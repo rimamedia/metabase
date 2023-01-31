@@ -175,6 +175,7 @@ class NativeQueryEditor extends Component {
     if (this.props.cancelQueryOnLeave) {
       this.props.cancelQuery?.();
     }
+    this._editor?.destroy?.();
     document.removeEventListener("keydown", this.handleKeyDown);
     document.removeEventListener("contextmenu", this.handleRightClick);
   }
@@ -499,6 +500,7 @@ class NativeQueryEditor extends Component {
 
   render() {
     const {
+      question,
       query,
       setParameterValue,
       readOnly,
@@ -542,6 +544,7 @@ class NativeQueryEditor extends Component {
             </div>
             {hasParametersList && (
               <ResponsiveParametersList
+                question={question}
                 parameters={parameters}
                 setParameterValue={setParameterValue}
                 setParameterIndex={this.setParameterIndex}

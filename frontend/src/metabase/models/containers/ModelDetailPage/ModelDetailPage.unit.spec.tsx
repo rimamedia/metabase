@@ -1,4 +1,5 @@
 import React from "react";
+import { IndexRedirect, Redirect, Route } from "react-router";
 import nock from "nock";
 import userEvent from "@testing-library/user-event";
 
@@ -12,22 +13,41 @@ import {
   waitForElementToBeRemoved,
   within,
 } from "__support__/ui";
-import { ORDERS, PRODUCTS, PEOPLE } from "__support__/sample_database_fixture";
 import {
+  setupActionsEndpoints,
   setupCardsEndpoints,
   setupCollectionsEndpoints,
   setupDatabasesEndpoints,
-  setupTablesEndpoints,
 } from "__support__/server-mocks";
 
+import { checkNotNull } from "metabase/core/utils/types";
+import { ActionsApi } from "metabase/services";
 import Models from "metabase/entities/questions";
+import { getMetadata } from "metabase/selectors/metadata";
 
-import type { Card, Collection, Field } from "metabase-types/api";
-import { createMockCollection, createMockUser } from "metabase-types/api/mocks";
+import type {
+  Card,
+  Collection,
+  Field,
+  WritebackAction,
+  WritebackQueryAction,
+} from "metabase-types/api";
+import {
+  createMockCollection,
+  createMockDatabase,
+  createMockField,
+  createMockTable,
+  createMockUser,
+  createMockImplicitCUDActions,
+  createMockQueryAction as _createMockQueryAction,
+  createMockStructuredDatasetQuery,
+  createMockStructuredQuery,
+  createMockNativeDatasetQuery,
+  createMockNativeQuery,
+} from "metabase-types/api/mocks";
 
+import { TYPE } from "metabase-lib/types/constants";
 import type Question from "metabase-lib/Question";
-import Database from "metabase-lib/metadata/Database";
-import Table from "metabase-lib/metadata/Table";
 import {
   getStructuredModel as _getStructuredModel,
   getNativeModel as _getNativeModel,
@@ -40,18 +60,101 @@ import {
 import ModelDetailPage from "./ModelDetailPage";
 
 // eslint-disable-next-line react/display-name
-jest.mock("metabase/core/components/Link", () => ({ to, ...props }: any) => (
-  <a {...props} href={to} />
+jest.mock("metabase/actions/containers/ActionCreator", () => () => (
+  <div data-testid="mock-action-editor" />
 ));
 
-const resultMetadata = ORDERS.fields.map(field => field.getPlainObject());
+const TEST_DATABASE_ID = 1;
+const TEST_TABLE_ID = 1;
+const TEST_FIELD = createMockField({
+  id: 1,
+  display_name: "Field 1",
+  table_id: TEST_TABLE_ID,
+});
+
+const TEST_FK_TABLE_1_ID = 2;
+const TEST_FK_FIELD = createMockField({
+  id: 4,
+  table_id: TEST_FK_TABLE_1_ID,
+});
+
+const TEST_FIELDS = [
+  TEST_FIELD,
+  createMockField({
+    id: 2,
+    display_name: "Field 2",
+    table_id: TEST_TABLE_ID,
+  }),
+  createMockField({
+    id: 3,
+    display_name: "Field 3",
+    table_id: TEST_TABLE_ID,
+    semantic_type: TYPE.FK,
+    fk_target_field_id: TEST_FK_FIELD.id,
+    target: TEST_FK_FIELD,
+  }),
+];
+
+const TEST_TABLE = createMockTable({
+  id: TEST_TABLE_ID,
+  name: "TEST_TABLE",
+  display_name: "TEST_TABLE",
+  fields: TEST_FIELDS,
+  db_id: TEST_DATABASE_ID,
+});
+
+const TEST_FK_TABLE_1 = createMockTable({
+  id: TEST_FK_TABLE_1_ID,
+  name: "TEST_TABLE points to this",
+  fields: [TEST_FK_FIELD],
+});
+
+const TEST_DATABASE = createMockDatabase({
+  id: TEST_DATABASE_ID,
+  name: "Test Database",
+  tables: [TEST_TABLE, TEST_FK_TABLE_1],
+});
+
+const TEST_DATABASE_WITH_ACTIONS = createMockDatabase({
+  ...TEST_DATABASE,
+  settings: { "database-enable-actions": true },
+});
 
 function getStructuredModel(card?: Partial<StructuredSavedCard>) {
-  return _getStructuredModel({ ...card, result_metadata: resultMetadata });
+  return _getStructuredModel({
+    ...card,
+    result_metadata: TEST_FIELDS,
+    dataset_query: createMockStructuredDatasetQuery({
+      database: TEST_DATABASE_ID,
+      query: createMockStructuredQuery({ "source-table": TEST_TABLE_ID }),
+    }),
+  });
 }
 
 function getNativeModel(card?: Partial<NativeSavedCard>) {
-  return _getNativeModel({ ...card, result_metadata: resultMetadata });
+  return _getNativeModel({
+    ...card,
+    result_metadata: TEST_FIELDS,
+    dataset_query: createMockNativeDatasetQuery({
+      database: TEST_DATABASE_ID,
+      native: createMockNativeQuery({
+        query: `SELECT * FROM ${TEST_TABLE.name}`,
+      }),
+    }),
+  });
+}
+
+const TEST_QUERY = "UPDATE orders SET status = 'shipped";
+
+function createMockQueryAction(
+  opts?: Partial<WritebackQueryAction>,
+): WritebackQueryAction {
+  return _createMockQueryAction({
+    ...opts,
+    dataset_query: createMockNativeDatasetQuery({
+      native: createMockNativeQuery({ query: TEST_QUERY }),
+    }),
+  });
 }
 
 const COLLECTION_1 = createMockCollection({
@@ -68,24 +171,30 @@ const COLLECTION_2 = createMockCollection({
 
 type SetupOpts = {
   model: Question;
+  tab?: string;
+  actions?: WritebackAction[];
+  hasActionsEnabled?: boolean;
   collections?: Collection[];
   usedBy?: Question[];
 };
 
-async function setup({ model, collections = [], usedBy = [] }: SetupOpts) {
+async function setup({
+  model,
+  tab = "usage",
+  actions = [],
+  collections = [],
+  usedBy = [],
+  hasActionsEnabled = false,
+}: SetupOpts) {
   const scope = nock(location.origin).persist();
 
   const modelUpdateSpy = jest.spyOn(Models.actions, "update");
 
-  const database = model.database();
-  const tables = database?.tables || [];
   const card = model.card() as Card;
-  const slug = `${card.id}-model-name`;
 
-  if (database) {
-    setupDatabasesEndpoints(scope, [getDatabaseObject(database)]);
-    setupTablesEndpoints(scope, tables.map(getTableObject));
-  }
+  setupDatabasesEndpoints(scope, [
+    hasActionsEnabled ? TEST_DATABASE_WITH_ACTIONS : TEST_DATABASE,
+  ]);
 
   scope
     .get("/api/card")
@@ -96,32 +205,36 @@ async function setup({ model, collections = [], usedBy = [] }: SetupOpts) {
     );
 
   setupCardsEndpoints(scope, [card]);
-
+  setupActionsEndpoints(scope, model.id(), actions);
   setupCollectionsEndpoints(scope, collections);
 
-  renderWithProviders(<ModelDetailPage params={{ slug }} />, {
-    withSampleDatabase: true,
-  });
+  const name = model.displayName()?.toLowerCase();
+  const slug = `${model.id()}-${name}`;
+  const baseUrl = `/model/${slug}/detail`;
+  const initialRoute = `${baseUrl}/${tab}`;
 
-  await waitForElementToBeRemoved(() =>
-    screen.queryByTestId("loading-spinner"),
+  const { store, history } = renderWithProviders(
+    <Route path="/model/:slug/detail">
+      <IndexRedirect to="usage" />
+      <Route path="usage" component={ModelDetailPage} />
+      <Route path="schema" component={ModelDetailPage} />
+      <Route path="actions" component={ModelDetailPage} />
+      <Redirect from="*" to="usage" />
+    </Route>,
+    { withRouter: true, initialRoute },
   );
 
-  return { modelUpdateSpy };
+  await waitForElementToBeRemoved(() => screen.queryAllByText(/Loading/i));
+
+  const metadata = getMetadata(store.getState());
+
+  return { history, baseUrl, metadata, scope, modelUpdateSpy };
 }
 
-function getDatabaseObject(database: Database) {
-  return {
-    ...database.getPlainObject(),
-    tables: database.tables.map(getTableObject),
-  };
-}
+type SetupActionsOpts = Omit<SetupOpts, "tab" | "hasActionsEnabled">;
 
-function getTableObject(table: Table) {
-  return {
-    ...table.getPlainObject(),
-    schema: table.schema_name,
-  };
+async function setupActions(opts: SetupActionsOpts) {
+  return setup({ ...opts, tab: "actions", hasActionsEnabled: true });
 }
 
 describe("ModelDetailPage", () => {
@@ -282,7 +395,7 @@ describe("ModelDetailPage", () => {
         it("displays model schema", async () => {
           const model = getModel();
           const fields = model.getResultMetadata();
-          await setup({ model });
+          await setup({ model, tab: "schema" });
 
           userEvent.click(screen.getByText("Schema"));
 
@@ -294,6 +407,174 @@ describe("ModelDetailPage", () => {
           fields.forEach((field: Field) => {
             expect(screen.getByText(field.display_name)).toBeInTheDocument();
           });
+        });
+      });
+
+      describe("actions section", () => {
+        it("is shown if actions are enabled for model's database", async () => {
+          await setup({ model: getModel(), hasActionsEnabled: true });
+          expect(screen.getByText("Actions")).toBeInTheDocument();
+        });
+
+        it("isn't shown if actions are disabled for model's database", async () => {
+          await setup({ model: getModel(), hasActionsEnabled: false });
+          expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+        });
+
+        it("redirects to 'Used by' when trying to access actions tab without them enabled", async () => {
+          const { baseUrl, history } = await setup({
+            model: getModel(),
+            hasActionsEnabled: false,
+            tab: "actions",
+          });
+
+          expect(history?.getCurrentLocation().pathname).toBe(
+            `${baseUrl}/usage`,
+          );
+          expect(screen.getByRole("tab", { name: "Used by" })).toHaveAttribute(
+            "aria-selected",
+            "true",
+          );
+        });
+
+        it("shows empty state if there are no actions", async () => {
+          await setupActions({ model: getModel(), actions: [] });
+          expect(
+            screen.queryByRole("list", { name: /Action list/i }),
+          ).not.toBeInTheDocument();
+          expect(
+            screen.getByText(/No actions have been created yet/i),
+          ).toBeInTheDocument();
+        });
+
+        it("allows to create a new query action from the empty state", async () => {
+          await setupActions({ model: getModel(), actions: [] });
+          userEvent.click(screen.getByRole("button", { name: "New action" }));
+          expect(screen.getByTestId("mock-action-editor")).toBeVisible();
+        });
+
+        it("lists existing query actions", async () => {
+          const model = getModel();
+          const action = createMockQueryAction({ model_id: model.id() });
+          await setupActions({ model, actions: [action] });
+
+          expect(screen.getByText(action.name)).toBeInTheDocument();
+          expect(screen.getByText(TEST_QUERY)).toBeInTheDocument();
+          expect(
+            screen.getByText(`Created by ${action.creator.common_name}`),
+          ).toBeInTheDocument();
+        });
+
+        it("lists existing implicit actions", async () => {
+          const model = getModel();
+          await setupActions({
+            model,
+            actions: createMockImplicitCUDActions(model.id()),
+          });
+
+          expect(screen.getByText("Create")).toBeInTheDocument();
+          expect(screen.getByText("Update")).toBeInTheDocument();
+          expect(screen.getByText("Delete")).toBeInTheDocument();
+        });
+
+        it("allows to create a new query action", async () => {
+          const model = getModel();
+          await setupActions({
+            model,
+            actions: [createMockQueryAction({ model_id: model.id() })],
+          });
+
+          userEvent.click(screen.getByRole("button", { name: "New action" }));
+
+          expect(screen.getByTestId("mock-action-editor")).toBeVisible();
+        });
+
+        it("allows to edit a query action", async () => {
+          const model = getModel();
+          const action = createMockQueryAction({ model_id: model.id() });
+          await setupActions({ model, actions: [action] });
+
+          const listItem = screen.getByRole("listitem", { name: action.name });
+          userEvent.click(within(listItem).getByLabelText("pencil icon"));
+
+          expect(screen.getByTestId("mock-action-editor")).toBeVisible();
+        });
+
+        it("allows to create implicit actions", async () => {
+          const createActionSpy = jest.spyOn(ActionsApi, "create");
+          const model = getModel();
+          const action = createMockQueryAction({ model_id: model.id() });
+          await setupActions({ model, actions: [action] });
+
+          userEvent.click(screen.getByTestId("new-action-menu"));
+          userEvent.click(screen.getByText("Create basic actions"));
+
+          await waitFor(() => {
+            expect(createActionSpy).toHaveBeenCalledWith({
+              name: "Create",
+              type: "implicit",
+              kind: "row/create",
+              model_id: model.id(),
+            });
+          });
+          expect(createActionSpy).toHaveBeenCalledWith({
+            name: "Update",
+            type: "implicit",
+            kind: "row/update",
+            model_id: model.id(),
+          });
+          expect(createActionSpy).toHaveBeenCalledWith({
+            name: "Delete",
+            type: "implicit",
+            kind: "row/delete",
+            model_id: model.id(),
+          });
+        });
+
+        it("allows to create implicit actions from the empty state", async () => {
+          const createActionSpy = jest.spyOn(ActionsApi, "create");
+          const model = getModel();
+          await setupActions({ model, actions: [] });
+
+          userEvent.click(
+            screen.getByRole("button", { name: /Create basic action/i }),
+          );
+
+          await waitFor(() => {
+            expect(createActionSpy).toHaveBeenCalledWith({
+              name: "Create",
+              type: "implicit",
+              kind: "row/create",
+              model_id: model.id(),
+            });
+          });
+          expect(createActionSpy).toHaveBeenCalledWith({
+            name: "Update",
+            type: "implicit",
+            kind: "row/update",
+            model_id: model.id(),
+          });
+          expect(createActionSpy).toHaveBeenCalledWith({
+            name: "Delete",
+            type: "implicit",
+            kind: "row/delete",
+            model_id: model.id(),
+          });
+        });
+
+        it("doesn't allow to create implicit actions when they already exist", async () => {
+          const model = getModel();
+          await setupActions({
+            model,
+            actions: createMockImplicitCUDActions(model.id()),
+          });
+
+          expect(
+            screen.queryByText(/Create basic action/i),
+          ).not.toBeInTheDocument();
+          expect(
+            screen.queryByTestId("new-action-menu"),
+          ).not.toBeInTheDocument();
         });
       });
 
@@ -329,6 +610,27 @@ describe("ModelDetailPage", () => {
           userEvent.click(screen.getByText("Schema"));
           expect(screen.queryByText("Edit metadata")).not.toBeInTheDocument();
         });
+
+        it("doesn't allow to create actions", async () => {
+          await setupActions({ model, actions: [] });
+          expect(screen.queryByText("New action")).not.toBeInTheDocument();
+          expect(
+            screen.queryByText("Create basic actions"),
+          ).not.toBeInTheDocument();
+          expect(
+            screen.queryByTestId("new-action-menu"),
+          ).not.toBeInTheDocument();
+        });
+
+        it("doesn't allow to edit actions", async () => {
+          const action = createMockQueryAction({ model_id: model.id() });
+          await setupActions({ model, actions: [action] });
+
+          const listItem = screen.getByRole("listitem", { name: action.name });
+          const editButton = within(listItem).queryByLabelText("pencil icon");
+
+          expect(editButton).not.toBeInTheDocument();
+        });
       });
     });
   });
@@ -339,23 +641,19 @@ describe("ModelDetailPage", () => {
     it("displays backing table", async () => {
       await setup({ model });
       expect(screen.getByLabelText("Backing table")).toHaveTextContent(
-        "Orders",
+        TEST_TABLE.display_name,
       );
     });
 
     it("displays related tables", async () => {
-      await setup({ model });
+      const { metadata } = await setup({ model });
+      const TABLE_1 = checkNotNull(metadata.table(TEST_FK_TABLE_1_ID));
 
       const list = within(screen.getByTestId("model-relationships"));
 
-      expect(list.getByRole("link", { name: "Products" })).toHaveAttribute(
-        "href",
-        PRODUCTS.newQuestion().getUrl(),
-      );
-      expect(list.getByRole("link", { name: "People" })).toHaveAttribute(
-        "href",
-        PEOPLE.newQuestion().getUrl(),
-      );
+      expect(
+        list.getByRole("link", { name: TABLE_1.displayName() }),
+      ).toHaveAttribute("href", TABLE_1.newQuestion().getUrl());
       expect(list.queryByText("Reviews")).not.toBeInTheDocument();
     });
   });
@@ -373,6 +671,57 @@ describe("ModelDetailPage", () => {
       expect(
         screen.queryByTestId("model-relationships"),
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("navigation", () => {
+    const model = getStructuredModel();
+
+    it("navigates between tabs", async () => {
+      const { baseUrl, history } = await setup({
+        model,
+        hasActionsEnabled: true,
+      });
+
+      expect(history?.getCurrentLocation().pathname).toBe(`${baseUrl}/usage`);
+      expect(screen.getByRole("tab", { name: "Used by" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      userEvent.click(screen.getByText("Schema"));
+      expect(history?.getCurrentLocation().pathname).toBe(`${baseUrl}/schema`);
+      expect(screen.getByRole("tab", { name: "Schema" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      userEvent.click(screen.getByText("Actions"));
+      expect(history?.getCurrentLocation().pathname).toBe(`${baseUrl}/actions`);
+      expect(screen.getByRole("tab", { name: "Actions" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+
+      userEvent.click(screen.getByText("Used by"));
+      expect(history?.getCurrentLocation().pathname).toBe(`${baseUrl}/usage`);
+      expect(screen.getByRole("tab", { name: "Used by" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+
+    it("redirects to 'Used by' when opening an unknown tab", async () => {
+      const { baseUrl, history } = await setup({
+        model,
+        tab: "foo-bar",
+      });
+
+      expect(history?.getCurrentLocation().pathname).toBe(`${baseUrl}/usage`);
+      expect(screen.getByRole("tab", { name: "Used by" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
     });
   });
 });
