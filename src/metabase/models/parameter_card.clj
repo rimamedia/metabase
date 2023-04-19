@@ -5,8 +5,8 @@
    [metabase.util.i18n :refer [tru]]
    [metabase.util.malli :as mu]
    [metabase.util.malli.schema :as ms]
-   [toucan.db :as db]
-   [toucan.models :as models]))
+   [toucan.models :as models]
+   [toucan2.core :as t2]))
 
 (models/defmodel ParameterCard :parameter_card)
 
@@ -29,11 +29,13 @@
 (defn- pre-update
   [pc]
   (u/prog1 pc
-    (validate-parameterized-object-type pc)))
+    (when (:parameterized_object_type pc)
+      (validate-parameterized-object-type pc))))
 
 (mi/define-methods
  ParameterCard
- {:properties (constantly {::mi/timestamped? true})
+ {:properties (constantly {::mi/timestamped? true
+                           ::mi/entity-id    true})
   :types      (constantly {:parameterized_object_type :keyword})
   :pre-insert pre-insert
   :pre-update pre-update})
@@ -45,12 +47,11 @@
    (delete-all-for-parameterized-object! parameterized-object-type parameterized-object-id []))
 
   ([parameterized-object-type parameterized-object-id parameter-ids-still-in-use]
-   (db/delete! ParameterCard
-               :parameterized_object_type parameterized-object-type
-               :parameterized_object_id parameterized-object-id
-               (if (empty? parameter-ids-still-in-use)
-                 {}
-                 {:where [:not-in :parameter_id parameter-ids-still-in-use]}))))
+   (let [conditions (concat [:parameterized_object_type parameterized-object-type
+                             :parameterized_object_id parameterized-object-id]
+                            (when (seq parameter-ids-still-in-use)
+                              [:parameter_id [:not-in parameter-ids-still-in-use]]))]
+     (apply t2/delete! ParameterCard conditions))))
 
 (defn- upsert-from-parameters!
   [parameterized-object-type parameterized-object-id parameters]
@@ -59,14 +60,14 @@
           conditions {:parameterized_object_id   parameterized-object-id
                       :parameterized_object_type parameterized-object-type
                       :parameter_id              id}]
-      (or (db/update-where! ParameterCard conditions :card_id card-id)
-          (db/insert! ParameterCard (merge conditions {:card_id card-id}))))))
+      (or (pos? (t2/update! ParameterCard conditions {:card_id card-id}))
+          (t2/insert! ParameterCard (merge conditions {:card_id card-id}))))))
 
 (mu/defn upsert-or-delete-from-parameters!
   "From a parameters list on card or dashboard, create, update,
   or delete appropriate ParameterCards for each parameter in the dashboard"
   [parameterized-object-type :- ms/NonBlankString
-   parameterized-object-id   :- ms/IntGreaterThanZero
+   parameterized-object-id   :- ms/PositiveInt
    parameters                :- [:maybe [:sequential ms/Parameter]]]
   (let [upsertable?           (fn [{:keys [values_source_type values_source_config id]}]
                                 (and values_source_type id (:card_id values_source_config)

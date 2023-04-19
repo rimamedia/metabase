@@ -7,9 +7,9 @@
   TODO - We should rename this namespace to `metabase.driver.test-extensions` or something like that."
   (:require
    [clojure.string :as str]
-   [clojure.tools.logging :as log]
    [clojure.tools.reader.edn :as edn]
-   [environ.core :refer [env]]
+   [environ.core :as env]
+   [hawk.init]
    [medley.core :as m]
    [metabase.db :as mdb]
    [metabase.driver :as driver]
@@ -19,15 +19,17 @@
    [metabase.models.table :refer [Table]]
    [metabase.plugins.classloader :as classloader]
    [metabase.query-processor :as qp]
-   [metabase.test-runner.init :as test-runner.init]
    [metabase.test.initialize :as initialize]
    [metabase.util :as u]
    [metabase.util.date-2 :as u.date]
+   [metabase.util.log :as log]
    [metabase.util.schema :as su]
    [potemkin.types :as p.types]
    [pretty.core :as pretty]
    [schema.core :as s]
-   [toucan.db :as db]))
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 ;;; +----------------------------------------------------------------------------------------------------------------+
 ;;; |                                   Dataset Definition Record Types & Protocol                                   |
@@ -162,7 +164,7 @@
   "Like `driver/the-driver`, but guaranteed to return a driver with test extensions loaded, throwing an Exception
   otherwise. Loads driver and test extensions automatically if not already done."
   [driver]
-  (test-runner.init/assert-tests-are-not-initializing (pr-str (list 'the-driver-with-test-extensions driver)))
+  (hawk.init/assert-tests-are-not-initializing (pr-str (list 'the-driver-with-test-extensions driver)))
   (initialize/initialize-if-needed! :plugins)
   (let [driver (driver/the-initialized-driver driver)]
     (load-test-extensions-namespace-if-needed driver)
@@ -240,7 +242,7 @@
 
 (defmethod metabase-instance FieldDefinition
   [this table]
-  (db/select-one Field
+  (t2/select-one Field
                  :table_id    (u/the-id table)
                  :%lower.name (u/lower-case-en (:field-name this))
                  {:order-by [[:id :asc]]}))
@@ -250,7 +252,7 @@
   ;; Look first for an exact table-name match; otherwise allow DB-qualified table names for drivers that need them
   ;; like Oracle
   (letfn [(table-with-name [table-name]
-            (db/select-one Table
+            (t2/select-one Table
                            :db_id       (:id database)
                            :%lower.name table-name
                            {:order-by [[:id :asc]]}))]
@@ -262,7 +264,7 @@
   (assert (string? database-name))
   (assert (keyword? driver))
   (mdb/setup-db!)
-  (db/select-one Database
+  (t2/select-one Database
                  :name    database-name
                  :engine (u/qualified-name driver)
                  {:order-by [[:id :asc]]}))
@@ -395,7 +397,7 @@
 
   ([_driver aggregation-type {field-id :id, table-id :table_id}]
    {:pre [(some? table-id)]}
-   (first (qp/query->expected-cols {:database (db/select-one-field :db_id Table :id table-id)
+   (first (qp/query->expected-cols {:database (t2/select-one-fn :db_id Table :id table-id)
                                     :type     :query
                                     :query    {:source-table table-id
                                                :aggregation  [[aggregation-type [:field-id field-id]]]}}))))
@@ -660,18 +662,29 @@
 ;;; |                                                 Test Env Vars                                                  |
 ;;; +----------------------------------------------------------------------------------------------------------------+
 
+(defn- db-test-env-var-keyword [driver env-var]
+  (keyword (format "mb-%s-test-%s" (name driver) (name env-var))))
+
 (defn db-test-env-var
   "Look up test environment var `env-var` for the given `driver` containing connection related parameters.
   If no `:default` param is specified and the var isn't found, throw.
 
-     (db-test-env-var :mysql :user) ; Look up `MB_MYSQL_TEST_USER`"
+     (db-test-env-var :mysql :user) ; Look up `MB_MYSQL_TEST_USER`
+
+  You can change this value at run time with [[db-test-env-var!]]."
   ([driver env-var]
    (db-test-env-var driver env-var nil))
 
   ([driver env-var default]
-   (get env
-        (keyword (format "mb-%s-test-%s" (name driver) (name env-var)))
-        default)))
+   (get env/env (db-test-env-var-keyword driver env-var) default)))
+
+(defn db-test-env-var!
+  "Update or the value of a test env var. A `nil` new-value removes the env var value."
+  [driver env-var new-value]
+  (if (some? new-value)
+    (alter-var-root #'env/env assoc (db-test-env-var-keyword driver env-var) (str new-value))
+    (alter-var-root #'env/env dissoc (db-test-env-var-keyword driver env-var)))
+  nil)
 
 (defn- to-system-env-var-str
   "Converts the clojure environment variable form (a keyword) to a stringified version that will be specified at the

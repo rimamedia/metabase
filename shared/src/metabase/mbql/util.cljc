@@ -5,18 +5,20 @@
   (:clj
    [(:require
      [clojure.string :as str]
-     [clojure.tools.logging :as log]
+     [metabase.mbql.predicates :as mbql.preds]
      [metabase.mbql.schema :as mbql.s]
      [metabase.mbql.schema.helpers :as schema.helpers]
      [metabase.mbql.util.match :as mbql.match]
      [metabase.models.dispatch :as models.dispatch]
      [metabase.shared.util.i18n :as i18n]
      [metabase.util.i18n]
+     [metabase.util.log :as log]
      [potemkin :as p]
      [schema.core :as s])]
    :cljs
    [(:require
      [clojure.string :as str]
+     [metabase.mbql.predicates :as mbql.preds]
      [metabase.mbql.schema :as mbql.s]
      [metabase.mbql.schema.helpers :as schema.helpers]
      [metabase.mbql.util.match :as mbql.match]
@@ -281,11 +283,27 @@
     [(op :guard temporal-extract-ops) field & args]
     [:temporal-extract field (temporal-extract-ops->unit [op (first args)])]))
 
+(defn- desugar-divide-with-extra-args [expression]
+  (mbql.match/replace expression
+    [:/ x y z & more]
+    (recur (into [:/ [:/ x y]] (cons z more)))))
+
+(s/defn desugar-expression :- mbql.s/FieldOrExpressionDef
+  "Rewrite various 'syntactic sugar' expressions like `:/` with more than two args into something simpler for drivers
+  to compile."
+  [expression :- mbql.s/FieldOrExpressionDef]
+  (-> expression
+      desugar-divide-with-extra-args))
+
+(defn- maybe-desugar-expression [clause]
+  (cond-> clause
+    (mbql.preds/FieldOrExpressionDef? clause) desugar-expression))
+
 (s/defn desugar-filter-clause :- mbql.s/Filter
   "Rewrite various 'syntatic sugar' filter clauses like `:time-interval` and `:inside` as simpler, logically
   equivalent clauses. This can be used to simplify the number of filter clauses that need to be supported by anything
   that needs to enumerate all the possible filter types (such as driver query processor implementations, or the
-  implementation `negate-filter-clause` below.)"
+  implementation [[negate-filter-clause]] below.)"
   [filter-clause :- mbql.s/Filter]
   (-> filter-clause
       desugar-current-relative-datetime
@@ -296,7 +314,8 @@
       desugar-is-empty-and-not-empty
       desugar-inside
       simplify-compound-filter
-      desugar-temporal-extract))
+      desugar-temporal-extract
+      maybe-desugar-expression))
 
 (defmulti ^:private negate* first)
 
@@ -713,6 +732,18 @@
   (update-field-options field-or-ref (partial into {} (remove (fn [[k _]]
                                                                 (when (keyword? k)
                                                                   (namespace k)))))))
+
+(defn referenced-field-ids
+  "Find all the `:field` references with integer IDs in `coll`, which can be a full MBQL query, a snippet of MBQL, or a
+  sequence of those things; return a set of Field IDs. Includes Fields referenced indirectly via `:source-field`.
+  Returns `nil` if no IDs are found."
+  [coll]
+  (not-empty
+   (into #{}
+         (comp cat (filter some?))
+         (mbql.match/match coll
+           [:field (id :guard integer?) opts]
+           [id (:source-field opts)]))))
 
 #?(:clj
    (p/import-vars

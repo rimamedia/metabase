@@ -2,7 +2,6 @@
   "Code for running a query in the context of a specific Card."
   (:require
    [clojure.string :as str]
-   [clojure.tools.logging :as log]
    [medley.core :as m]
    [metabase.api.common :as api]
    [metabase.mbql.normalize :as mbql.normalize]
@@ -13,6 +12,7 @@
    [metabase.models.database :refer [Database]]
    [metabase.models.query :as query]
    [metabase.public-settings :as public-settings]
+   [metabase.public-settings.premium-features :refer [defenterprise]]
    [metabase.query-processor :as qp]
    [metabase.query-processor.error-type :as qp.error-type]
    [metabase.query-processor.middleware.constraints :as qp.constraints]
@@ -21,9 +21,12 @@
    [metabase.query-processor.util :as qp.util]
    [metabase.util :as u]
    [metabase.util.i18n :refer [trs tru]]
+   [metabase.util.log :as log]
    [metabase.util.schema :as su]
    [schema.core :as s]
-   [toucan.db :as db]))
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 (defn- query-magic-ttl
   "Compute a 'magic' cache TTL time (in seconds) for `query` by multipling its historic average execution times by the
@@ -39,13 +42,18 @@
                   (u/emoji "💾"))
         ttl-seconds))))
 
+(defenterprise db-cache-ttl
+  "Fetches the cache TTL set for the given database. Returns nil on OSS."
+  metabase-enterprise.advanced-config.caching
+  [_database])
+
 (defn- ttl-hierarchy
   "Returns the cache ttl (in seconds), by first checking whether there is a stored value for the database,
   dashboard, or card (in that order of increasing preference), and if all of those don't exist, then the
   `query-magic-ttl`, which is based on average execution time."
   [card dashboard database query]
   (when (public-settings/enable-query-caching)
-    (let [ttls (map :cache_ttl [card dashboard database])
+    (let [ttls              [(:cache_ttl card) (:cache_ttl dashboard) (db-cache-ttl database)]
           most-granular-ttl (first (filter some? ttls))]
       (or (when most-granular-ttl ; stored TTLs are in hours; convert to seconds
             (* most-granular-ttl 3600))
@@ -61,8 +69,8 @@
                       (assoc :constraints constraints
                              :parameters  parameters
                              :middleware  middleware))
-        dashboard (db/select-one [Dashboard :cache_ttl] :id (:dashboard-id ids))
-        database  (db/select-one [Database :cache_ttl] :id (:database_id card))
+        dashboard (t2/select-one [Dashboard :cache_ttl] :id (:dashboard-id ids))
+        database  (t2/select-one [Database :cache_ttl] :id (:database_id card))
         ttl-secs  (ttl-hierarchy card dashboard database query)]
     (assoc query :cache-ttl ttl-secs)))
 
@@ -91,7 +99,7 @@
   parameters to the API request must be allowed for this type (i.e. `:string/=` is allowed for a `:string` parameter,
   but `:number/=` is not)."
   [card-id]
-  (let [query (api/check-404 (db/select-one-field :dataset_query Card :id card-id))]
+  (let [query (api/check-404 (t2/select-one-fn :dataset_query Card :id card-id))]
     (into
      {}
      (comp
@@ -187,9 +195,8 @@
                   ;; customize the `context` passed to the QP
                   (^:once fn* [query info]
                    (qp.streaming/streaming-response [context export-format (u/slugify (:card-name info))]
-                     (binding [qp.perms/*card-id* card-id]
-                       (qp-runner query info context)))))
-        card  (api/read-check (db/select-one [Card :id :name :dataset_query :database_id
+                                                    (qp-runner query info context))))
+        card  (api/read-check (t2/select-one [Card :id :name :dataset_query :database_id
                                               :cache_ttl :collection_id :dataset :result_metadata]
                                              :id card-id))
         query (-> (assoc (query-for-card card parameters constraints middleware {:dashboard-id dashboard-id}) :async? true)
@@ -209,4 +216,5 @@
       (validate-card-parameters card-id (mbql.normalize/normalize-fragment [:parameters] parameters)))
     (log/tracef "Running query for Card %d:\n%s" card-id
                 (u/pprint-to-str query))
-    (run query info)))
+    (binding [qp.perms/*card-id* card-id]
+     (run query info))))

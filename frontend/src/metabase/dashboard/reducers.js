@@ -22,7 +22,7 @@ import {
   REMOVE_PARAMETER,
   FETCH_CARD_DATA,
   CLEAR_CARD_DATA,
-  UPDATE_DASHCARD_ID,
+  UPDATE_DASHCARD_IDS,
   MARK_CARD_AS_SLOW,
   SET_PARAMETER_VALUE,
   FETCH_DASHBOARD_CARD_DATA,
@@ -31,12 +31,11 @@ import {
   HIDE_ADD_PARAMETER_POPOVER,
   SET_SIDEBAR,
   CLOSE_SIDEBAR,
-  FETCH_DASHBOARD_PARAMETER_FIELD_VALUES_WITH_CACHE,
-  SAVE_DASHBOARD_AND_CARDS,
   SET_DOCUMENT_TITLE,
   SET_SHOW_LOADING_COMPLETE_FAVICON,
   RESET,
   SET_PARAMETER_VALUES,
+  UNDO_REMOVE_CARD_FROM_DASH,
 } from "./actions";
 
 import { isVirtualDashCard, syncParametersAndEmbeddingParams } from "./utils";
@@ -217,6 +216,10 @@ const dashcards = handleActions(
       ...state,
       [dashcardId]: { ...state[dashcardId], isRemoved: true },
     }),
+    [UNDO_REMOVE_CARD_FROM_DASH]: (state, { payload: { dashcardId } }) => ({
+      ...state,
+      [dashcardId]: { ...state[dashcardId], isRemoved: false },
+    }),
     [MARK_NEW_CARD_SEEN]: (state, { payload: dashcardId }) => ({
       ...state,
       [dashcardId]: { ...state[dashcardId], justAdded: false },
@@ -247,11 +250,16 @@ const dashcardData = handleActions(
       next: (state, { payload: { cardId, dashcardId } }) =>
         assocIn(state, [dashcardId, cardId]),
     },
-    [UPDATE_DASHCARD_ID]: {
-      next: (state, { payload: { oldDashcardId, newDashcardId } }) =>
-        chain(state)
-          .assoc(newDashcardId, state[oldDashcardId])
-          .dissoc(oldDashcardId)
+    [UPDATE_DASHCARD_IDS]: {
+      next: (state, { payload: { oldDashcardIds, newDashcardIds } }) =>
+        oldDashcardIds
+          .reduce(
+            (wrappedState, oldDcId, index) =>
+              wrappedState
+                .dissoc(oldDcId)
+                .assoc(newDashcardIds[index], state[oldDcId]),
+            chain(state),
+          )
           .value(),
     },
     [RESET]: { next: state => ({}) },
@@ -285,26 +293,6 @@ const parameterValues = handleActions(
     },
     [SET_PARAMETER_VALUES]: {
       next: (state, { payload }) => payload,
-    },
-    [RESET]: { next: state => ({}) },
-  },
-  {},
-);
-
-const parameterValuesSearchCache = handleActions(
-  {
-    [INITIALIZE]: { next: () => ({}) },
-    [SAVE_DASHBOARD_AND_CARDS]: {
-      next: () => ({}),
-    },
-    [FETCH_DASHBOARD_PARAMETER_FIELD_VALUES_WITH_CACHE]: {
-      next: (state, { payload }) =>
-        payload
-          ? assoc(state, payload.cacheKey, {
-              results: payload.results,
-              has_more_values: payload.has_more_values,
-            })
-          : state,
     },
     [RESET]: { next: state => ({}) },
   },
@@ -433,6 +421,5 @@ export default combineReducers({
   loadingDashCards,
   isAddParameterPopoverOpen,
   sidebar,
-  parameterValuesSearchCache,
   missingActionParameters,
 });

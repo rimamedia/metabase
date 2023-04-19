@@ -2,13 +2,12 @@ import React, { useCallback, useMemo, useRef, useState } from "react";
 import { getIn } from "icepick";
 import type { LocationDescriptor } from "history";
 
+import { useMount } from "react-use";
 import { IconProps } from "metabase/components/Icon";
 
 import { IS_EMBED_PREVIEW } from "metabase/lib/embed";
 import { SERVER_ERROR_TYPES } from "metabase/lib/errors";
 import Utils from "metabase/lib/utils";
-
-import { useOnMount } from "metabase/hooks/use-on-mount";
 
 import {
   getGenericErrorMessage,
@@ -19,6 +18,8 @@ import { mergeSettings } from "metabase/visualizations/lib/settings";
 import { isVirtualDashCard } from "metabase/dashboard/utils";
 
 import { isActionCard } from "metabase/actions/utils";
+
+import ErrorBoundary from "metabase/ErrorBoundary";
 
 import type {
   Card,
@@ -102,6 +103,7 @@ interface DashCardProps {
   isFullscreen?: boolean;
   isMobile?: boolean;
   isNightMode?: boolean;
+  isPublic?: boolean;
 
   headerIcon?: IconProps;
 
@@ -131,6 +133,7 @@ function DashCard({
   isNightMode = false,
   isFullscreen = false,
   isMobile = false,
+  isPublic = false,
   isEditingParameter,
   clickBehaviorSidebarDashcard,
   headerIcon,
@@ -150,7 +153,7 @@ function DashCard({
     setIsPreviewingCard(wasPreviewingCard => !wasPreviewingCard);
   }, []);
 
-  useOnMount(() => {
+  useMount(() => {
     if (dashcard.justAdded) {
       cardRootRef?.current?.scrollIntoView({
         block: "nearest",
@@ -284,6 +287,7 @@ function DashCard({
             hasError={hasError}
             onAddSeries={onAddSeries}
             onRemove={onRemove}
+            onUpdateVisualizationSettings={onUpdateVisualizationSettings}
             onReplaceAllVisualizationSettings={
               onReplaceAllVisualizationSettings
             }
@@ -306,51 +310,56 @@ function DashCard({
     onAddSeries,
     onRemove,
     onReplaceAllVisualizationSettings,
+    onUpdateVisualizationSettings,
     handlePreviewToggle,
     handleShowClickBehaviorSidebar,
   ]);
 
   return (
-    <DashCardRoot
-      className="Card rounded flex flex-column hover-parent hover--visibility"
-      hasHiddenBackground={hasHiddenBackground}
-      isNightMode={isNightMode}
-      isUsuallySlow={isSlow === "usually-slow"}
-      ref={cardRootRef}
-    >
-      {renderDashCardActions()}
-      <DashCardVisualization
-        dashboard={dashboard}
-        dashcard={dashcard}
-        series={series}
-        parameterValues={parameterValues}
-        parameterValuesBySlug={parameterValuesBySlug}
-        metadata={metadata}
-        mode={mode}
-        gridSize={gridSize}
-        gridItemWidth={gridItemWidth}
-        totalNumGridCols={totalNumGridCols}
-        headerIcon={headerIcon}
-        expectedDuration={expectedDuration}
-        error={error}
-        isAction={isAction}
-        isEmbed={isEmbed}
-        isEditing={isEditing}
-        isEditingDashCardClickBehavior={isEditingDashCardClickBehavior}
-        isEditingDashboardLayout={isEditingDashboardLayout}
-        isEditingParameter={isEditingParameter}
-        isClickBehaviorSidebarOpen={isClickBehaviorSidebarOpen}
-        isSlow={isSlow}
-        isPreviewing={isPreviewingCard}
-        isFullscreen={isFullscreen}
+    <ErrorBoundary>
+      <DashCardRoot
+        data-testid="dashcard"
+        className="Card rounded flex flex-column hover-parent hover--visibility"
+        hasHiddenBackground={hasHiddenBackground}
         isNightMode={isNightMode}
-        isMobile={isMobile}
-        showClickBehaviorSidebar={showClickBehaviorSidebar}
-        onUpdateVisualizationSettings={onUpdateVisualizationSettings}
-        onChangeCardAndRun={changeCardAndRunHandler}
-        onChangeLocation={onChangeLocation}
-      />
-    </DashCardRoot>
+        isUsuallySlow={isSlow === "usually-slow"}
+        ref={cardRootRef}
+      >
+        {renderDashCardActions()}
+        <DashCardVisualization
+          dashboard={dashboard}
+          dashcard={dashcard}
+          series={series}
+          parameterValues={parameterValues}
+          parameterValuesBySlug={parameterValuesBySlug}
+          metadata={metadata}
+          mode={mode}
+          gridSize={gridSize}
+          gridItemWidth={gridItemWidth}
+          totalNumGridCols={totalNumGridCols}
+          headerIcon={headerIcon}
+          expectedDuration={expectedDuration}
+          error={error}
+          isAction={isAction}
+          isEmbed={isEmbed}
+          isEditing={isEditing}
+          isEditingDashCardClickBehavior={isEditingDashCardClickBehavior}
+          isEditingDashboardLayout={isEditingDashboardLayout}
+          isEditingParameter={isEditingParameter}
+          isClickBehaviorSidebarOpen={isClickBehaviorSidebarOpen}
+          isSlow={isSlow}
+          isPreviewing={isPreviewingCard}
+          isFullscreen={isFullscreen}
+          isNightMode={isNightMode}
+          isMobile={isMobile}
+          isPublic={isPublic}
+          showClickBehaviorSidebar={showClickBehaviorSidebar}
+          onUpdateVisualizationSettings={onUpdateVisualizationSettings}
+          onChangeCardAndRun={changeCardAndRunHandler}
+          onChangeLocation={onChangeLocation}
+        />
+      </DashCardRoot>
+    </ErrorBoundary>
   );
 }
 

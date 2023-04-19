@@ -20,6 +20,8 @@
    [schema.macros :as s.macros]
    [schema.utils :as s.utils]))
 
+(set! *warn-on-reflection* true)
+
 ;; So the `:type/` hierarchy is loaded.
 (comment types/keep-me)
 
@@ -345,7 +347,7 @@
 
 (def BooleanString
   "Schema for a string that is a valid representation of a boolean (either `true` or `false`).
-   Something that adheres to this schema is guaranteed to to work with `Boolean/parseBoolean`."
+   Something that adheres to this schema is guaranteed to work with `Boolean/parseBoolean`."
   (with-api-error-message (s/constrained s/Str boolean-string?)
     (deferred-tru "value must be a valid boolean string (''true'' or ''false'').")))
 
@@ -417,4 +419,9 @@
 (def NanoIdString
   "Schema for a 21-character NanoID string, like \"FReCLx5hSWTBU7kjCWfuu\"."
   (with-api-error-message #"^[A-Za-z0-9_\-]{21}$"
+    (deferred-tru "String must be a valid 21-character NanoID string.")))
+
+(def UUIDString
+  "Schema for a UUID string"
+  (with-api-error-message u/uuid-regex
     (deferred-tru "String must be a valid 21-character NanoID string.")))

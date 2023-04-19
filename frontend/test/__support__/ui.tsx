@@ -1,14 +1,17 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
+import type { ByRoleMatcher } from "@testing-library/react";
 import { merge } from "icepick";
 import _ from "underscore";
 import { createMemoryHistory, History } from "history";
 import { Router } from "react-router";
 import { routerReducer, routerMiddleware } from "react-router-redux";
+import type { Reducer } from "@reduxjs/toolkit";
 import { Provider } from "react-redux";
 import { ThemeProvider } from "@emotion/react";
 import { DragDropContextProvider } from "react-dnd";
 import HTML5Backend from "react-dnd-html5-backend";
+import type { MatcherFunction } from "@testing-library/dom";
 
 import { state as sampleDatabaseReduxState } from "__support__/sample_database_fixture";
 
@@ -21,6 +24,11 @@ import publicReducers from "metabase/reducers-public";
 
 import { getStore } from "./entities-store";
 
+type ReducerValue = ReducerObject | Reducer;
+interface ReducerObject {
+  [slice: string]: ReducerValue;
+}
+
 export interface RenderWithProvidersOptions {
   mode?: "default" | "public";
   initialRoute?: string;
@@ -28,6 +36,7 @@ export interface RenderWithProvidersOptions {
   withSampleDatabase?: boolean;
   withRouter?: boolean;
   withDND?: boolean;
+  customReducers?: ReducerObject;
 }
 
 /**
@@ -44,6 +53,7 @@ export function renderWithProviders(
     withSampleDatabase,
     withRouter = false,
     withDND = false,
+    customReducers,
     ...options
   }: RenderWithProvidersOptions = {},
 ) {
@@ -62,10 +72,13 @@ export function renderWithProviders(
     ? createMemoryHistory({ entries: [initialRoute] })
     : undefined;
 
-  const reducers = mode === "default" ? mainReducers : publicReducers;
+  let reducers = mode === "default" ? mainReducers : publicReducers;
 
   if (withRouter) {
     Object.assign(reducers, { routing: routerReducer });
+  }
+  if (customReducers) {
+    reducers = { ...reducers, ...customReducers };
   }
 
   const store = getStore(
@@ -154,12 +167,23 @@ function MaybeDNDProvider({
   );
 }
 
-export function getIcon(name: string) {
-  return screen.getByLabelText(`${name} icon`);
+export function getIcon(name: string, role: ByRoleMatcher = "img") {
+  return screen.getByRole(role, { name: `${name} icon` });
 }
 
-export function queryIcon(name: string) {
-  return screen.queryByLabelText(`${name} icon`);
+export function queryIcon(name: string, role: ByRoleMatcher = "img") {
+  return screen.queryByRole(role, { name: `${name} icon` });
+}
+
+/**
+ * Returns a matcher function to find text content that is broken up by multiple elements
+ *
+ * @param {string} textToFind
+ * @example
+ * screen.getByText(getBrokenUpTextMatcher("my text with a styled word"))
+ */
+export function getBrokenUpTextMatcher(textToFind: string): MatcherFunction {
+  return (content, element) => element?.textContent === textToFind;
 }
 
 export * from "@testing-library/react";

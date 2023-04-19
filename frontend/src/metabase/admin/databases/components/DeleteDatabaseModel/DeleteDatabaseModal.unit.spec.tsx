@@ -1,8 +1,8 @@
-import { render } from "@testing-library/react";
+import { render, waitForElementToBeRemoved } from "@testing-library/react";
 import React from "react";
+import fetchMock from "fetch-mock";
 import userEvent from "@testing-library/user-event";
 import { screen } from "__support__/ui";
-import useFetch from "metabase/hooks/use-fetch";
 import type Database from "metabase-lib/metadata/Database";
 import DeleteDatabaseModal, {
   DeleteDatabaseModalProps,
@@ -15,18 +15,16 @@ const getUsageInfo = (hasContent: boolean) => ({
   segment: hasContent ? 40 : 0,
 });
 
-jest.mock("metabase/hooks/use-fetch", () => ({
-  __esModule: true,
-  default: jest.fn(),
-}));
-
 const database = { name: "database name", id: 1 } as Database;
 
-const setup = ({
+const setup = async ({
   onDelete = jest.fn(),
+  hasContent = true,
 }: {
   onDelete?: DeleteDatabaseModalProps["onDelete"];
+  hasContent?: boolean;
 } = {}) => {
+  fetchMock.get("path:/api/database/1/usage_info", getUsageInfo(hasContent));
   render(
     <DeleteDatabaseModal
       onClose={jest.fn()}
@@ -35,22 +33,20 @@ const setup = ({
     />,
   );
 
+  await waitForElementToBeRemoved(() => screen.queryAllByText("Loading..."));
+
   return {
     onDelete,
   };
 };
 
 describe("DeleteDatabaseModal", () => {
-  const useFetchMock = useFetch as jest.Mock<typeof useFetch>;
-
   afterEach(() => {
     jest.clearAllMocks();
   });
 
-  it("should allow deleting database without content after confirming its name", () => {
-    useFetchMock.mockReturnValue({ data: getUsageInfo(false) } as any);
-
-    const { onDelete } = setup();
+  it("should allow deleting database without content after confirming its name", async () => {
+    const { onDelete } = await setup({ hasContent: false });
 
     const deleteButton = screen.getByRole("button", { name: "Delete" });
 
@@ -72,10 +68,8 @@ describe("DeleteDatabaseModal", () => {
     expect(onDelete).toHaveBeenCalledWith(database);
   });
 
-  it("should allow deleting database with content after confirming its name and its content removal", () => {
-    useFetchMock.mockReturnValue({ data: getUsageInfo(true) } as any);
-
-    const { onDelete } = setup();
+  it("should allow deleting database with content after confirming its name and its content removal", async () => {
+    const { onDelete } = await setup({ hasContent: true });
 
     const deleteButton = screen.getByRole("button", {
       name: "Delete this content and the DB connection",
@@ -102,10 +96,9 @@ describe("DeleteDatabaseModal", () => {
     expect(onDelete).toHaveBeenCalledWith(database);
   });
 
-  it("shows an error if removal failed", () => {
-    useFetchMock.mockReturnValue({ data: getUsageInfo(false) } as any);
-
-    const { onDelete } = setup({
+  it("shows an error if removal failed", async () => {
+    await setup({
+      hasContent: false,
       onDelete: () => {
         throw new Error("Something went wrong");
       },

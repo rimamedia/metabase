@@ -12,10 +12,9 @@ import type { OnScrollParams } from "react-virtualized";
 import { findDOMNode } from "react-dom";
 import { connect } from "react-redux";
 
-import { usePrevious } from "metabase/hooks/use-previous";
+import { usePrevious, useMount } from "react-use";
 import { getScrollBarSize } from "metabase/lib/dom";
 import { getSetting } from "metabase/selectors/settings";
-import { useOnMount } from "metabase/hooks/use-on-mount";
 
 import { sumArray } from "metabase/core/utils/arrays";
 
@@ -24,7 +23,6 @@ import {
   isPivotGroupColumn,
   multiLevelPivot,
 } from "metabase/lib/data_grid";
-import { formatColumn } from "metabase/lib/formatting";
 
 import type { DatasetData } from "metabase-types/types/Dataset";
 import type { VisualizationSettings } from "metabase-types/api";
@@ -54,7 +52,6 @@ import {
   leftHeaderCellSizeAndPositionGetter,
   topHeaderCellSizeAndPositionGetter,
   getCellWidthsForSection,
-  getWidthForRange,
 } from "./utils";
 
 import {
@@ -63,7 +60,11 @@ import {
   LEFT_HEADER_LEFT_SPACING,
   MIN_HEADER_CELL_WIDTH,
 } from "./constants";
-import { settings, _columnSettings as columnSettings } from "./settings";
+import {
+  settings,
+  _columnSettings as columnSettings,
+  getTitleForColumn,
+} from "./settings";
 
 const mapStateToProps = (state: State) => ({
   fontFamily: getSetting(state, "application-font"),
@@ -92,7 +93,6 @@ function PivotTable({
 }: PivotTableProps) {
   const [gridElement, setGridElement] = useState<HTMLElement | null>(null);
   const columnWidthSettings = settings["pivot_table.column_widths"];
-  const previousColumnWidthSettings = usePrevious(columnWidthSettings);
 
   const [
     { leftHeaderWidths, totalLeftHeaderWidths, valueHeaderWidths },
@@ -134,11 +134,10 @@ function PivotTable({
 
   const getColumnTitle = useCallback(
     function (columnIndex) {
-      const columns = data.cols.filter(col => !isPivotGroupColumn(col));
-      const { column, column_title: columnTitle } = settings.column(
-        columns[columnIndex],
-      );
-      return columnTitle || formatColumn(column);
+      const column = data.cols.filter(col => !isPivotGroupColumn(col))[
+        columnIndex
+      ];
+      return getTitleForColumn(column, settings);
     },
     [data, settings],
   );
@@ -161,7 +160,7 @@ function PivotTable({
     (bodyRef.current as Grid | null)?.recomputeGridSize?.();
   }, [data, leftHeaderRef, topHeaderRef, leftHeaderWidths, valueHeaderWidths]);
 
-  useOnMount(() => {
+  useMount(() => {
     setGridElement(bodyRef.current && findDOMNode(bodyRef.current));
   });
 
@@ -491,6 +490,7 @@ export default Object.assign(connect(mapStateToProps)(PivotTable), {
   uiName: t`Pivot Table`,
   identifier: "pivot",
   iconName: "pivot_table",
+  canSavePng: false,
   databaseSupportsPivotTables,
   isSensible,
   checkRenderable,

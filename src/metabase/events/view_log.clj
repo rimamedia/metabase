@@ -1,10 +1,10 @@
 (ns metabase.events.view-log
   (:require
    [clojure.core.async :as a]
-   [clojure.tools.logging :as log]
    [metabase.events :as events]
    [metabase.models.view-log :refer [ViewLog]]
-   [toucan.db :as db]))
+   [metabase.util.log :as log]
+   [toucan2.core :as t2]))
 
 (def ^:private view-log-topics
   "The `Set` of event topics which we subscribe to for view counting."
@@ -25,11 +25,11 @@
   "Simple base function for recording a view of a given `model` and `model-id` by a certain `user`."
   [model model-id user-id metadata]
   ;; TODO - we probably want a little code that prunes old entries so that this doesn't get too big
-  (db/insert! ViewLog
-    :user_id  user-id
-    :model    model
-    :model_id model-id
-    :metadata metadata))
+  (t2/insert! ViewLog
+              :user_id  user-id
+              :model    model
+              :model_id model-id
+              :metadata metadata))
 
 (defn handle-view-event!
   "Handle processing for a single event notification received on the view-log-channel"

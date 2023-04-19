@@ -11,6 +11,8 @@
    [metabase.util.i18n :refer [deferred-tru]]
    [schema.core :as s]))
 
+(set! *warn-on-reflection* true)
+
 (use-fixtures :once (fixtures/initialize :db))
 
 (defsetting test-api-setting-boolean
@@ -40,7 +42,8 @@
 
   ([user setting-names]
    (for [setting (mt/user-http-request user :get 200 "setting")
-         :when   (.contains setting-names (keyword (:key setting)))]
+         :when   (.contains ^clojure.lang.PersistentVector (vec setting-names)
+                            (keyword (:key setting)))]
      setting)))
 
 (defn- fetch-setting

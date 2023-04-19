@@ -15,7 +15,9 @@
    [metabase.test :as mt]
    [metabase.test.fixtures :as fixtures]
    [metabase.util :as u]
-   [toucan.db :as db]))
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 (use-fixtures :once (fixtures/initialize :db))
 
@@ -61,7 +63,7 @@
       (letfn [(fetch-activity [activity]
                 (merge
                  activity-defaults
-                 (db/select-one [Activity :id :user_id :details :model :model_id] :id (u/the-id activity))))]
+                 (t2/select-one [Activity :id :user_id :details :model :model_id] :id (u/the-id activity))))]
         (is (= [(merge
                  (fetch-activity activity2)
                  {:topic "dashboard-create"
@@ -107,8 +109,8 @@
                         (reverse views)
                         (range))
                    (group-by #(if (:card_id %) :card :other)))]
-    (db/insert-many! ViewLog (:other views))
-    (db/insert-many! QueryExecution (:card views))))
+    (t2/insert! ViewLog (:other views))
+    (t2/insert! QueryExecution (:card views))))
 
 (deftest recent-views-test
   (mt/with-temp* [Card      [card1 {:name                   "rand-name"

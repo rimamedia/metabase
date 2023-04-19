@@ -6,21 +6,25 @@
    [clojure.set :as set]
    [clojure.string :as str]
    [clojure.test :refer :all]
+   [hawk.init]
    [medley.core :as m]
    [metabase.db.connection :as mdb.connection]
    [metabase.driver :as driver]
    [metabase.models.field :refer [Field]]
    [metabase.models.table :refer [Table]]
    [metabase.query-processor :as qp]
-   [metabase.query-processor.middleware.add-implicit-joins :as qp.add-implicit-joins]
-   [metabase.test-runner.init :as test-runner.init]
+   [metabase.query-processor.middleware.add-implicit-joins
+    :as qp.add-implicit-joins]
    [metabase.test.data :as data]
    [metabase.test.data.env :as tx.env]
    [metabase.test.data.interface :as tx]
    [metabase.test.util :as tu]
    [metabase.util :as u]
+   [metabase.util.log :as log]
    [schema.core :as s]
-   [toucan.db :as db]))
+   [toucan2.core :as t2]))
+
+(set! *warn-on-reflection* true)
 
 ;;; ---------------------------------------------- Helper Fns + Macros -----------------------------------------------
 
@@ -41,7 +45,7 @@
   {:pre [(every? keyword? (cons feature more-features))]}
   ;; Can't use [[normal-drivers-with-feature]] during test initialization, because it means we end up having to load
   ;; plugins and a bunch of other nonsense.
-  (test-runner.init/assert-tests-are-not-initializing (pr-str (list* 'normal-drivers-with-feature feature more-features)))
+  (hawk.init/assert-tests-are-not-initializing (pr-str (list* 'normal-drivers-with-feature feature more-features)))
   (let [features (set (cons feature more-features))]
     (set (for [driver (normal-drivers)
                :let   [driver (tx/the-driver-with-test-extensions driver)]
@@ -83,7 +87,7 @@
   [table-kw field-kw]
   (merge
    (col-defaults)
-   (db/select-one [Field :id :table_id :semantic_type :base_type :effective_type
+   (t2/select-one [Field :id :table_id :semantic_type :base_type :effective_type
                    :coercion_strategy :name :display_name :fingerprint]
      :id (data/id table-kw field-kw))
    {:field_ref [:field (data/id table-kw field-kw) nil]}
@@ -191,7 +195,7 @@
         (update :display_name (partial format "%s → %s" (str/replace (:display_name source-col) #"(?i)\sid$" "")))
         (assoc :field_ref    [:field (:id dest-col) {:source-field (:id source-col)}]
                :fk_field_id  (:id source-col)
-               :source_alias (#'qp.add-implicit-joins/join-alias (db/select-one-field :name Table :id (data/id dest-table-kw))
+               :source_alias (#'qp.add-implicit-joins/join-alias (t2/select-one-fn :name Table :id (data/id dest-table-kw))
                                                                  (:name source-col))))))
 
 (declare cols)
@@ -298,7 +302,7 @@
 
   ([format-fns format-nil-values? response]
    (when (= (:status response) :failed)
-     (println "Error running query:" (u/pprint-to-str 'red response))
+     (log/warnf "Error running query: %s" (u/pprint-to-str 'red response))
      (throw (ex-info (:error response) response)))
 
    (let [format-fns (map format-rows-fn (format-rows-fns format-fns))]

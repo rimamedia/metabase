@@ -3,30 +3,33 @@
    [clojure.core.async :as a]
    [clojure.java.jdbc :as jdbc]
    [clojure.string :as str]
-   [clojure.tools.logging :as log]
+   [honey.sql :as sql]
    [java-time :as t]
    [metabase.driver.ddl.interface :as ddl.i]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
    [metabase.driver.sql.ddl :as sql.ddl]
    [metabase.public-settings :as public-settings]
    [metabase.query-processor :as qp]
-   [metabase.util.i18n :refer [trs]])
+   [metabase.util.i18n :refer [trs]]
+   [metabase.util.log :as log])
   (:import
    (java.sql SQLNonTransientConnectionException)))
 
+(set! *warn-on-reflection* true)
+
 (defn- exec-async [conn-chan db-spec sql+params]
   (a/thread
-   (jdbc/with-db-connection [conn db-spec]
-     (try
-       (let [pid (:pid (first (sql.ddl/jdbc-query conn ["select connection_id() pid"])))]
-         (a/put! conn-chan pid)
-         (sql.ddl/jdbc-query conn sql+params))
-       (catch SQLNonTransientConnectionException _e
-         ;; Our connection may be killed due to timeout, `kill` will throw an appropriate exception
-         nil)
-       (catch Exception e
-         (log/warn e)
-         e)))))
+    (jdbc/with-db-connection [conn db-spec]
+      (try
+        (let [pid (:pid (first (sql.ddl/jdbc-query conn ["select connection_id() pid"])))]
+          (a/put! conn-chan pid)
+          (sql.ddl/jdbc-query conn sql+params))
+        (catch SQLNonTransientConnectionException _e
+          ;; Our connection may be killed due to timeout, `kill` will throw an appropriate exception
+          nil)
+        (catch Exception e
+          (log/warn e)
+          e)))))
 
 (defn- kill [conn pid]
   (let [results (sql.ddl/jdbc-query conn ["show processlist"])
@@ -115,7 +118,20 @@
                 (fn delete-table [conn]
                   (sql.ddl/execute! conn [(sql.ddl/drop-table-sql database table-name)]))
                 ;; This will never be called, if the last step fails it does not need to be undone
-                (constantly nil)]]]
+                (constantly nil)]
+               [:persist.check/create-kv-table
+                (fn create-kv-table [conn]
+                  (sql.ddl/execute! conn [(format "drop table if exists %s.cache_info"
+                                                  schema-name)])
+                  (sql.ddl/execute! conn (sql/format
+                                          (ddl.i/create-kv-table-honey-sql-form schema-name)
+                                          {:dialect :mysql})))]
+               [:persist.check/populate-kv-table
+                (fn create-kv-table [conn]
+                  (sql.ddl/execute! conn (sql/format
+                                          (ddl.i/populate-kv-table-honey-sql-form
+                                           schema-name)
+                                          {:dialect :mysql})))]]]
     ;; Unlike postgres, mysql ddl clauses will not rollback in a transaction.
     ;; So we keep track of undo-steps to manually rollback previous, completed steps.
     (jdbc/with-db-connection [conn db-spec]

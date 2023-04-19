@@ -597,11 +597,16 @@
     interval
     NumericExpressionArg))
 
+(def ^:private IntGreaterThanZeroOrNumericExpression
+  (s/if number?
+    helpers/IntGreaterThanZero
+    NumericExpressionArg))
+
 (defclause ^{:requires-features #{:expressions}} coalesce
   a ExpressionArg, b ExpressionArg, more (rest ExpressionArg))
 
 (defclause ^{:requires-features #{:expressions}} substring
-  s StringExpressionArg, start NumericExpressionArg, length (optional NumericExpressionArg))
+  s StringExpressionArg, start IntGreaterThanZeroOrNumericExpression, length (optional NumericExpressionArg))
 
 (defclause ^{:requires-features #{:expressions}} length
   s StringExpressionArg)
@@ -776,7 +781,7 @@
    Field))
 
 (def ^:private EqualityComparable
-  "Schema for things things that make sense in a `=` or `!=` filter, i.e. things that can be compared for equality."
+  "Schema for things that make sense in a `=` or `!=` filter, i.e. things that can be compared for equality."
   (s/maybe
    (s/cond-pre
     s/Bool
@@ -927,7 +932,6 @@
 (def ^:private StringExpression*
   (one-of substring trim ltrim rtrim replace lower upper concat regex-match-first coalesce case))
 
-
 (def FieldOrExpressionDef
   "Schema for anything that is accepted as a top-level expression definition, either an arithmetic expression such as a
   `:+` clause or a `:field` clause."
@@ -936,8 +940,8 @@
    (partial is-clause? string-functions)   StringExpression
    (partial is-clause? boolean-functions)  BooleanExpression
    (partial is-clause? datetime-functions) DatetimeExpression
-   (partial is-clause? :case)                        case
-   :else                                             Field))
+   (partial is-clause? :case)              case
+   :else                                   Field))
 
 ;;; -------------------------------------------------- Aggregations --------------------------------------------------
 
@@ -975,7 +979,6 @@
 (defclause ^{:requires-features #{:standard-deviation-aggregations}} stddev
   field-or-expression FieldOrExpressionDef)
 
-(declare ag:var) ;; for clj-kondo
 (defclause ^{:requires-features #{:standard-deviation-aggregations}} [ag:var var]
   field-or-expression FieldOrExpressionDef)
 
